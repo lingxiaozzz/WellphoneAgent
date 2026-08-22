@@ -24,8 +24,8 @@ class MainActivity : Activity() {
 
     private lateinit var statusView: TextView
     private lateinit var calendarStatusView: TextView
+    private lateinit var calendarUiStatusView: TextView
     private lateinit var displaySpinner: Spinner
-    private lateinit var textInput: EditText
     private lateinit var calendarPromptInput: EditText
     private var displayIds: List<Int> = emptyList()
     private var pendingCalendarPrompt: String? = null
@@ -84,6 +84,23 @@ class MainActivity : Activity() {
             setOnClickListener { openLastCreatedEvent() }
         }
 
+        val calendarUiTitle = TextView(this).apply {
+            text = "无 API 日历创建（虚拟屏 UI）"
+            textSize = 20f
+        }
+
+        calendarUiStatusView = TextView(this).apply {
+            text = "UI 创建状态：等待执行"
+            textSize = 16f
+        }
+
+        val createCalendarWithUiButton = Button(this).apply {
+            text = "不用 API 创建另一个日历"
+            setOnClickListener {
+                createCalendarReminderWithUi(calendarPromptInput.text.toString())
+            }
+        }
+
         val accessibilityButton = Button(this).apply {
             text = "1. 打开无障碍设置"
             setOnClickListener {
@@ -134,28 +151,6 @@ class MainActivity : Activity() {
             }
         }
 
-        textInput = EditText(this).apply {
-            hint = "写入虚拟屏焦点控件的文字"
-            setText("Agent text without IME")
-        }
-
-        val setTextButton = Button(this).apply {
-            text = "向虚拟屏焦点控件写入文字"
-            setOnClickListener {
-                val displayId = selectedDisplayId()
-                showResult(
-                    if (displayId == null) {
-                        "没有可用的非主屏 Display"
-                    } else {
-                        AgentAccessibilityService.setFocusedText(
-                            displayId,
-                            textInput.text.toString(),
-                        )
-                    },
-                )
-            }
-        }
-
         layout.addView(title)
         layout.addView(statusView)
         layout.addView(calendarTitle)
@@ -163,14 +158,15 @@ class MainActivity : Activity() {
         layout.addView(calendarPromptInput)
         layout.addView(createCalendarButton)
         layout.addView(viewCalendarButton)
+        layout.addView(calendarUiTitle)
+        layout.addView(calendarUiStatusView)
+        layout.addView(createCalendarWithUiButton)
         layout.addView(accessibilityButton)
         layout.addView(refreshButton)
         layout.addView(displaySpinner)
         layout.addView(launchSettingsButton)
         layout.addView(startButton)
         layout.addView(stopButton)
-        layout.addView(textInput)
-        layout.addView(setTextButton)
 
         val scrollView = ScrollView(this).apply {
             addView(layout)
@@ -270,6 +266,55 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun createCalendarReminderWithUi(prompt: String) {
+        val displayId = selectedDisplayId()
+            ?: return showCalendarUiResult("没有可用的非主屏 Display")
+        val task = runCatching { CalendarTaskParser.parse(prompt) }
+            .getOrElse {
+                return showCalendarUiResult(
+                    "无法解析任务：${it.message ?: it.javaClass.simpleName}",
+                )
+            }
+        val launchIntent = Intent().apply {
+            setClassName(GOOGLE_CALENDAR_PACKAGE, GOOGLE_CALENDAR_LAUNCHER_ACTIVITY)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        if (launchIntent.resolveActivity(packageManager) == null) {
+            showCalendarUiResult("设备未安装 Google Calendar")
+            return
+        }
+        val options = ActivityOptions.makeBasic().apply {
+            launchDisplayId = displayId
+        }
+
+        val opened = runCatching {
+            startActivity(launchIntent, options.toBundle())
+        }.isSuccess
+        if (!opened) {
+            showCalendarUiResult("无法在 Display $displayId 打开 Google Calendar")
+            return
+        }
+
+        showCalendarUiResult("正在虚拟屏打开 Google Calendar…")
+        val startResult = AgentAccessibilityService.createCalendarWithUi(
+            displayId = displayId,
+            task = task,
+        ) { result ->
+            runOnUiThread { showCalendarUiResult(result) }
+        }
+        if (!startResult.startsWith("正在")) {
+            showCalendarUiResult(startResult)
+        } else {
+            showCalendarUiResult(
+                "$startResult\n将通过 UI 填写任务中的开始和结束时间",
+            )
+        }
+    }
+
+    private fun showCalendarUiResult(message: String) {
+        calendarUiStatusView.text = message
+    }
+
     private fun hasCalendarPermissions(): Boolean =
         checkSelfPermission(Manifest.permission.READ_CALENDAR) ==
             PackageManager.PERMISSION_GRANTED &&
@@ -343,5 +388,8 @@ class MainActivity : Activity() {
         private const val PREFERENCES_NAME = "calendar_agent"
         private const val LAST_EVENT_ID = "last_event_id"
         private const val LAST_EVENT_START = "last_event_start"
+        private const val GOOGLE_CALENDAR_PACKAGE = "com.google.android.calendar"
+        private const val GOOGLE_CALENDAR_LAUNCHER_ACTIVITY =
+            "com.android.calendar.AllInOneActivity"
     }
 }
