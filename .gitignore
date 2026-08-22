@@ -14,3 +14,20 @@
 .cxx
 local.properties
 /tools/scrcpy/
+# Gradle
+.gradle
+build
+app/build
+*.iml
+# Android Studio IDE
+.idea
+local.properties
+# 安装包、缓存
+*.apk
+*.aab
+captures
+.externalNativeBuild
+.cxx
+# 系统文件
+.DS_Store
+Thumbs.db
